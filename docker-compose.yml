@@ -1,0 +1,8 @@
+services:
+  agent:
+    image: ghcr.io/YOURUSERNAME/medieval-homelab-agent:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - .env
