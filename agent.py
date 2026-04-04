@@ -62,10 +62,11 @@ def collect():
     containers = client.containers.list()
     groups = group_containers(containers)
     services = []
+    AGENT_IMAGE = "ghcr.io/farh4d/medieval-homelab-agent"
 
     for base_name, group in groups.items():
         # Skip the agent itself
-        if "agent" in base_name:
+        if any(AGENT_IMAGE in (c.image.tags[0] if c.image.tags else "") for c in group["containers"]):
             continue
 
         # Use stats from the primary container (first one)
