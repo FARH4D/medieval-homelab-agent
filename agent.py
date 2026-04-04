@@ -7,7 +7,10 @@ from presets.generic import get_data as generic_get_data
 
 MASTERMIND_URL = os.environ.get("MASTERMIND_URL", "http://192.168.1.100:8000/report")
 VM_NAME = os.environ.get("VM_NAME", "unknown-vm")
+VM_HOST = os.environ.get("VM_HOST", "localhost")
 INTERVAL = int(os.environ.get("INTERVAL", "30"))
+
+client = docker.from_env()
 
 # API keys/tokens passed in as env vars per service
 # e.g. PRESET_CONFIG_PLEX_TOKEN=abc123
@@ -19,7 +22,9 @@ def get_config_for(service_name):
         if k.startswith(prefix)
     }
 
-client = docker.from_env()
+def get_base_name(container_name):
+    # immich_server -> immich, sonarr-1 -> sonarr
+    return container_name.lower().split("_")[0].split("-")[0]
 
 def get_container_stats(container):
     try:
@@ -39,27 +44,53 @@ def get_container_stats(container):
     except:
         return {"cpu_percent": 0, "mem_percent": 0}
 
+def group_containers(containers):
+    groups = {}
+    for container in containers:
+        base = get_base_name(container.name)
+        if base not in groups:
+            groups[base] = {
+                "containers": [],
+                "any_unhealthy": False
+            }
+        groups[base]["containers"].append(container)
+        if container.status != "running":
+            groups[base]["any_unhealthy"] = True
+    return groups
+
 def collect():
     containers = client.containers.list()
+    groups = group_containers(containers)
     services = []
 
-    for container in containers:
-        name = container.name.lower()
-        host = os.environ.get("VM_HOST", "localhost")
-        stats = get_container_stats(container)
+    for base_name, group in groups.items():
+        # Skip the agent itself
+        if "agent" in base_name:
+            continue
 
-        preset_key = next((k for k in PRESETS if k in name), None)
+        # Use stats from the primary container (first one)
+        primary = group["containers"][0]
+        stats = get_container_stats(primary)
 
+        # Determine overall status
+        status = "degraded" if group["any_unhealthy"] else "running"
+
+        # Check for preset match
+        preset_key = next((k for k in PRESETS if k in base_name), None)
         if preset_key:
             config = get_config_for(preset_key)
-            rich_data = PRESETS[preset_key](host, config)
+            rich_data = PRESETS[preset_key](VM_HOST, config)
         else:
-            rich_data = generic_get_data(host)
+            rich_data = generic_get_data(VM_HOST)
+
+        # Note how many containers are in this group
+        container_count = len(group["containers"])
 
         services.append({
-            "name": name,
-            "status": container.status,
+            "name": base_name,
+            "status": status,
             "preset": preset_key if preset_key else "generic",
+            "container_count": container_count,
             "stats": stats,
             "data": rich_data
         })
